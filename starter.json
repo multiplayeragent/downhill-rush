@@ -1,0 +1,21 @@
+{
+  "name": "Downhill Rush",
+  "genre": "racing",
+  "dim": "3D",
+  "mode": "Versus",
+  "players": "2–8",
+  "hook": "Carve through the flags. Miss one: +3 seconds.",
+  "how": "Everyone skis the same run at once. Carve left and right to pass between each pair of flags, tuck for speed on the straights and fly off the jumps. Each missed gate adds 3 seconds; the fastest time wins.",
+  "controls": "Arrow keys or A/D to carve, Down or Space to tuck, or on-screen buttons",
+  "uses": [
+    ["Leaderboard", "The fastest runs down the mountain."],
+    ["Host-run rounds", "The host's browser starts each run, picks the gates and posts the results; if it leaves, the next player takes over."],
+    ["Bots", "Bots ski with you, and sometimes miss a gate, until enough people join."],
+    ["Live sync", "Every skier carves down the slope for everyone at once."]
+  ],
+  "ideas": [
+    "Add a night run with torches along the slope",
+    "Add coins between the gates that take a second off",
+    "Make it a snowboard race with a halfpipe"
+  ]
+}

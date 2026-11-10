@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Downhill Rush</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #cfe6ff; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 2px #0a2540cc, 0 2px 8px #0a254088; font-weight: 800; }
+  #pos { top: max(12px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); font-size: 40px; line-height: 1; }
+  #pos small { font-size: 18px; opacity: .9; }
+  #gates { top: calc(max(12px, env(safe-area-inset-top)) + 46px); left: max(16px, env(safe-area-inset-left)); font-size: 16px; }
+  #gates b { color: #ffd23f; }
+  #time { top: max(12px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); text-align: right; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #time small { display: block; font-size: 14px; margin-top: 4px; opacity: .9; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .9; white-space: nowrap; }
+  #hint { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px); left: 0; right: 0; text-align: center; font-size: 16px; padding: 0 16px; }
+  body.touch #net { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px); }
+  body.touch #hint { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 104px); }
+  #count { inset: 0; display: grid; place-items: center; font-size: min(26vw, 180px); color: #ff4d4d; -webkit-text-stroke: 4px #fff; text-shadow: 0 6px 20px #0a254066; }
+  #msg { top: 26%; left: 0; right: 0; text-align: center; font-size: 32px; color: #ffd23f; -webkit-text-stroke: 1.5px #6a3d00; transition: opacity .3s, transform .3s; opacity: 0; transform: scale(.85); }
+  #msg.on { opacity: 1; transform: scale(1); } #msg.bad { color: #ff5a5a; -webkit-text-stroke-color: #5a0000; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0a254055; }
+  #over[hidden], .pad[hidden] { display: none; }
+  .card { width: min(380px, 90vw); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #10304ff2; border: 1px solid #ffffff3a; box-sizing: border-box; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ffd23f; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li em { font-style: normal; color: #ff8a8a; font-size: 12px; margin-left: 6px; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; }
+  .card p { margin: 12px 0 0; font-size: 13px; opacity: .8; }
+  button.go { width: 100%; min-height: 48px; margin-top: 14px; border: 0; border-radius: 12px; background: #ff4d4d; color: #fff; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .pad { position: fixed; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
+  .pad button { width: 76px; height: 76px; border-radius: 50%; border: 2px solid #ffffffcc; background: #10304f88; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffffff77; }
+  #padL { left: max(16px, env(safe-area-inset-left)); } #padR { right: max(16px, env(safe-area-inset-right)); }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="pos"></div>
+<div class="hud" id="gates"></div>
+<div class="hud" id="time"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="count"></div>
+<div class="hud" id="msg"></div>
+<div class="pad" id="padL" hidden><button data-k="left">◀</button><button data-k="right">▶</button></div>
+<div class="pad" id="padR" hidden><button data-k="tuck">TUCK</button></div>
+<div id="over" hidden><div class="card">
+  <h2>Results</h2><ol id="results"></ol>
+  <h3>Fastest runs</h3><ol id="board"><li class="note">Loading…</li></ol>
+  <button class="go" id="again">Ski again</button>
+  <p id="next"></p>
+</div></div>
+<script type="module">
+/* ═══ DOWNHILL RUSH · a Multiplayer Agent starter ═════════════════════════════════════
+ * Ski down a snowy mountain through slalom gates; each missed gate costs 3 seconds; the
+ * fastest run wins. Versus, 2–8 players; bots fill empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ the run's length and shape, skiing physics, jumps, gates, bots, timers
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   COURSE ........ the mountain's height everywhere, the jumps, and the gates (from a seed)
+ *   WORLD ......... sky, snow, trees, fences, start and finish arches, gate flags, effects
+ *   SKIERS ........ the skier model, and ONE physics function that moves any skier
+ *   RACE (HOST) ... the run's phases (start, race, done) and the bots. Only the host writes these.
+ *   ME ............ carving, tucking, gates, the run timer. Each player writes only its own.
+ *   HUD & RESULTS . place, gates, timer, countdown, results, leaderboard
+ *   INPUT ......... keyboard and touch
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `s` (one packed JSON field: run id, position,
+ *     heading, speed, height in the air, tuck, gates missed, finish time) about 15 times a
+ *     second, `hb` (heartbeat) once a second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `race` (id, version
+ *     `v`, phase, the gates' seed, start and end times, results) and `bots`. A new host
+ *     adopts both and carries on.
+ *   - Every client builds the same gates from race.seed (a seeded random generator), so
+ *     the course itself is never sent.
+ *   - Each skier is timed from the moment it crosses the start line to the finish line,
+ *     plus 3 seconds per missed gate. Someone who joins mid-run starts at the top.
+ *   - Intent: "again" {} from the results card asks the host to start the next run now.
+ *   - Other skiers are drawn a little ahead of their last update (speed × time since),
+ *     then eased, so they glide instead of stepping.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "fastest-run": each player's best time (stored as 600000 - ms, so
+ *     higher is better), shown on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 6,               // bots fill the run up to this many skiers
+  length: 900,            // from the start line (z = 0) down to the finish line
+  piste: 52,              // width of the groomed run
+  deep: 6,                // deep snow between the run's edge and the fence: slow going
+  slope: 0.32,            // how steep the mountain is (drop per unit downhill)
+  wind: [26, 12],         // how far the run winds left and right
+  gravity: 10,            // pull down the slope, units/s²
+  drag: 0.0065,           // air drag standing up (top speed about 37)
+  tuckDrag: 0.0034,       // air drag tucked (top speed about 51)
+  friction: 1,            // snow friction, units/s²
+  deepSnow: 9,            // extra slowdown in deep snow
+  turn: 1.8,              // carving, radians/s
+  tuckTurn: 0.5,          // share of your carving you keep while tucked
+  carveLoss: 0.3,         // speed lost carving hard, per second
+  pushOff: 6,             // speed at GO
+  kickers: [170, 480, 760], // where the jumps' lips are (distance down the run)
+  kickLen: 14, kickH: 2.4,  // jump ramp length and height
+  launch: 0.17,           // how hard a jump throws you up (share of your speed)
+  airGravity: 34,         // gravity in the air
+  gateGap: 48,            // distance between gates (about)
+  gateWidth: 10,          // the gap between a gate's two flags
+  missPenalty: 3000,      // ms added for each missed gate
+  countdown: 5000,        // ms at the start before GO
+  afterFirst: 20000,      // ms the run stays open after the first skier finishes
+  resultsFor: 12000,      // ms the results show before the next run
+  botSkill: [0.7, 1],     // how clean and brave bots are
+  botMiss: 0.06,          // chance a bot misses any one gate
+  board: "fastest-run",
+};
+const BOT_NAMES = ["Frosty", "Alpine", "Powder", "Slalom", "Yeti", "Blizzard", "Avalanche"];
+const COLORS = ["#ff4d4d", "#2f7dff", "#ffd23f", "#2fcf6a", "#b45cff", "#ff8c1a", "#ff5cb8", "#14c8c8"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'downhill-rush',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never change what this returns). */
+function shared(key, fb) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fb); memo.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} }, dropped = false;
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+
+// ── COURSE ──────────────────────────────────────────────────────────────────────────
+// x runs across the mountain, z down it (the start line is z = 0), y is height.
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const angle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const HALF = CONFIG.piste / 2, FENCE = HALF + CONFIG.deep, END = CONFIG.length + 20;
+/** The middle of the run at distance z: it winds gently left and right. */
+const centerX = (z) => CONFIG.wind[0] * Math.sin(z / 160) + CONFIG.wind[1] * Math.sin(z / 61 + 1);
+/** Snow height at (x, z), without the jumps: the slope, the flat run-out, the valley walls. */
+function baseH(x, z) {
+  let y = -(z < END ? z : END + (z - END) * 0.12) * CONFIG.slope;
+  const side = Math.abs(x - centerX(z)) - FENCE;
+  if (side > 0) y += side * 0.25 + side * side * 0.004;
+  return y;
+}
+/** Extra height of a jump ramp at z (it rises to kickH at the lip, then drops away). */
+function kickH(z) { for (const k of CONFIG.kickers) if (z > k - CONFIG.kickLen && z <= k) return (CONFIG.kickH * (z - (k - CONFIG.kickLen))) / CONFIG.kickLen; return 0; }
+const groundH = (x, z) => baseH(x, z) + kickH(z);
+/** The gates for one run, the same on every client for the same seed: { z, x, red }. */
+function makeGates(seed) {
+  const rnd = mulberry32(seed), gates = [];
+  let side = rnd() < 0.5 ? -1 : 1;
+  for (let z = 45; z < CONFIG.length - 30; z += CONFIG.gateGap * (0.85 + rnd() * 0.3)) {
+    if (CONFIG.kickers.some((k) => z > k - 45 && z < k + 35)) continue; // no gates on the jumps
+    gates.push({ z, x: centerX(z) + side * (5 + rnd() * 9), red: gates.length % 2 === 0 });
+    side = -side;
+  }
+  return gates;
+}
+let course = { seed: -1, gates: [] };
+
+// ── WORLD ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog("#dcecff", 140, 560);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.3, 3000);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#eef6ff", "#a9bddc", 1.55));
+const sun = new THREE.DirectionalLight("#fff4e0", 1.35); sun.position.set(-80, 120, -40); scene.add(sun);
+function canvasTex(w, h, paint, repeat) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const seeded = mulberry32(21);
+// Sky: a dome from deep blue overhead to pale at the horizon.
+const skyGeo = new THREE.SphereGeometry(2500, 32, 20), skyCol = [], top = new THREE.Color("#3f8fe8"), low = new THREE.Color("#e6f3ff");
+for (let i = 0; i < skyGeo.attributes.position.count; i++) { const c = low.clone().lerp(top, clamp(skyGeo.attributes.position.getY(i) / 1200, 0, 1) ** 0.6); skyCol.push(c.r, c.g, c.b); }
+skyGeo.setAttribute("color", new THREE.Float32BufferAttribute(skyCol, 3));
+const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+scene.add(sky);
+// The snow: one big sheet that follows the run, with faint groomed lines.
+const cordTex = canvasTex(64, 64, (c) => { c.fillStyle = "#ffffff"; c.fillRect(0, 0, 64, 64); c.fillStyle = "#edf2fa"; for (let x = 0; x < 64; x += 8) c.fillRect(x, 0, 3, 64); }, true);
+const snowGeo = new THREE.PlaneGeometry(440, 1, 110, 360).rotateX(-Math.PI / 2);
+{ // rows close together near the run, further apart far down the valley
+  const pos = snowGeo.attributes.position, uv = snowGeo.attributes.uv, col = [], c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getZ(i) + 0.5, z = -150 + (t < 0.75 ? (t / 0.75) * 1250 : 1250 + ((t - 0.75) / 0.25) * 900), x = pos.getX(i) + centerX(z), off = Math.abs(x - centerX(z));
+    pos.setXYZ(i, x, baseH(x, z), z); uv.setXY(i, x / 6, z / 6);
+    c.set(off < HALF ? "#e6f0fc" : off < FENCE ? "#f4f8ff" : "#ffffff").offsetHSL(0, 0, (seeded() - 0.5) * 0.03); col.push(c.r, c.g, c.b);
+  }
+  snowGeo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3)); snowGeo.computeVertexNormals();
+}
+scene.add(new THREE.Mesh(snowGeo, new THREE.MeshStandardMaterial({ vertexColors: true, map: cordTex, roughness: 0.95 })));
+// Pine trees on the slopes beside the run (the same for everyone: seeded).
+const TREES = 520, mtx = new THREE.Matrix4(), q0 = new THREE.Quaternion();
+const pines = new THREE.InstancedMesh(new THREE.ConeGeometry(2.6, 6.5, 7).translate(0, 4.6, 0), new THREE.MeshStandardMaterial({ color: "#2d6b4a", flatShading: true }), TREES);
+const pineTops = new THREE.InstancedMesh(new THREE.ConeGeometry(1.7, 3.6, 7).translate(0, 8.3, 0), new THREE.MeshStandardMaterial({ color: "#f4f9ff", flatShading: true }), TREES);
+const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.35, 0.45, 2, 6).translate(0, 1, 0), new THREE.MeshStandardMaterial({ color: "#6b4a2e" }), TREES);
+for (let i = 0; i < TREES; i++) {
+  const z = -120 + seeded() * 1250, side = seeded() < 0.5 ? -1 : 1, x = centerX(z) + side * (FENCE + 5 + seeded() ** 1.6 * 150), s = 0.7 + seeded() * 0.8;
+  mtx.compose(new THREE.Vector3(x, baseH(x, z) - 0.3, z), q0, new THREE.Vector3(s, s, s));
+  pines.setMatrixAt(i, mtx); pineTops.setMatrixAt(i, mtx); trunks.setMatrixAt(i, mtx);
+}
+scene.add(pines, pineTops, trunks);
+// Mountains far down the valley (no fog, painted pale so they look far away).
+const peakGeo = new THREE.ConeGeometry(1, 1, 9, 4), peakCol = [];
+for (let i = 0; i < peakGeo.attributes.position.count; i++) { const c = new THREE.Color(peakGeo.attributes.position.getY(i) > -0.2 ? "#ffffff" : "#c3d3ea"); peakCol.push(c.r, c.g, c.b); }
+peakGeo.setAttribute("color", new THREE.Float32BufferAttribute(peakCol, 3));
+const peaks = new THREE.InstancedMesh(peakGeo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, fog: false }), 16);
+for (let i = 0; i < 16; i++) { // standing on the valley floor where the snow sheet ends
+  const x = (i / 15 - 0.5) * 2600 + (seeded() - 0.5) * 120, z = 2050 + seeded() * 500 + Math.abs(x) * 0.3, h = 600 + seeded() * 500, w = 420 + seeded() * 260;
+  mtx.compose(new THREE.Vector3(x, -345 + h / 2, z), q0, new THREE.Vector3(w, h, w)); peaks.setMatrixAt(i, mtx);
+}
+scene.add(peaks);
+/** A strip that follows one side of the run (offset from the middle), from height h0 to h1 above the snow. */
+function sideStrip(offset, h0, h1, mat, z0 = -40, z1 = END + 60, step = 4) {
+  const pos = [], uv = [], idx = [];
+  for (let z = z0, n = 0; z <= z1; z += step, n++) {
+    const x = centerX(z) + offset, y = baseH(x, z);
+    pos.push(x, y + h0, z, x, y + h1, z); uv.push(z / 4, 0, z / 4, 1);
+    if (z + step <= z1) idx.push(n * 2, n * 2 + 2, n * 2 + 1, n * 2 + 1, n * 2 + 2, n * 2 + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); scene.add(m); return m;
+}
+// Safety fences: orange netting on both sides.
+const netTex = canvasTex(64, 32, (c) => { c.strokeStyle = "#ff6a1a"; c.lineWidth = 3; for (let x = -32; x < 96; x += 10) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + 16, 32); c.moveTo(x + 16, 0); c.lineTo(x, 32); c.stroke(); } c.fillStyle = "#ff6a1a"; c.fillRect(0, 0, 64, 4); }, true);
+const netMat = new THREE.MeshLambertMaterial({ map: netTex, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide });
+for (const s of [-1, 1]) sideStrip(s * FENCE, 0, 1.3, netMat);
+// Blue markers where the groomed run ends.
+const markers = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.1, 1.6, 6).translate(0, 0.8, 0), new THREE.MeshLambertMaterial({ color: "#2f6bff" }), 2 * Math.ceil((END + 40) / 20));
+{ let k = 0; for (let z = -20; z < END + 20; z += 20) for (const s of [-1, 1]) { const x = centerX(z) + s * HALF; mtx.makeTranslation(x, baseH(x, z), z); markers.setMatrixAt(k++, mtx); } markers.count = k; }
+scene.add(markers);
+// The jumps: snow ramps across the run with a blue lip.
+for (const k of CONFIG.kickers) {
+  const z0 = k - CONFIG.kickLen, xL = centerX(k) - FENCE, xR = centerX(k) + FENCE, b0 = baseH(centerX(z0), z0), b1 = baseH(centerX(k), k);
+  const v = [xL, b0, z0, xR, b0, z0, xL, b1 + CONFIG.kickH, k, xR, b1 + CONFIG.kickH, k, xL, b1 - 0.4, k, xR, b1 - 0.4, k];
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(v, 3));
+  g.setIndex([0, 2, 1, 1, 2, 3, 2, 4, 3, 3, 4, 5, 0, 4, 2, 1, 3, 5]); g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: "#f2f7ff", roughness: 0.9, side: THREE.DoubleSide })));
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(FENCE * 2, 0.25, 0.5), new THREE.MeshLambertMaterial({ color: "#2f6bff" }));
+  lip.position.set(centerX(k), b1 + CONFIG.kickH - 0.05, k - 0.2); scene.add(lip);
+}
+/** A flat strip lying on the snow across the run between z0 and z1 (start and finish lines). */
+function snowStrip(z0, z1, mat) {
+  const xL = centerX(z0) - HALF, xR = centerX(z0) + HALF, y0 = baseH(centerX(z0), z0) + 0.05, y1 = baseH(centerX(z1), z1) + 0.05;
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute([xL, y0, z0, xR, y0, z0, xL, y1, z1, xR, y1, z1], 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2)); g.setIndex([0, 2, 1, 1, 2, 3]); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat); scene.add(m); return m;
+}
+/** An arch over the run at z with a banner. */
+function arch(z, text, colors) {
+  const cx = centerX(z), y = baseH(cx, z), postMat = new THREE.MeshLambertMaterial({ color: colors[0] });
+  for (const s of [-1, 1]) { const p = new THREE.Mesh(new THREE.BoxGeometry(1, 12, 1), postMat); p.position.set(cx + s * (HALF + 1.5), y + 6, z); scene.add(p); }
+  const tex = canvasTex(512, 64, (c) => { c.fillStyle = colors[0]; c.fillRect(0, 0, 512, 64); c.fillStyle = colors[1]; c.font = "900 44px system-ui"; c.textAlign = "center"; c.fillText(text, 256, 48); });
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(CONFIG.piste + 4, 2.4, 0.4), new THREE.MeshBasicMaterial({ map: tex })); banner.position.set(cx, y + 11, z); scene.add(banner);
+}
+const checker = canvasTex(64, 8, (c) => { for (let x = 0; x < 16; x++) for (let y = 0; y < 2; y++) { c.fillStyle = (x + y) % 2 ? "#111" : "#fff"; c.fillRect(x * 4, y * 4, 4, 4); } });
+checker.repeat.set(4, 1); checker.wrapS = THREE.RepeatWrapping;
+snowStrip(0, 0.8, new THREE.MeshBasicMaterial({ color: "#ff4d4d" }));
+snowStrip(CONFIG.length, CONFIG.length + 1.6, new THREE.MeshBasicMaterial({ map: checker }));
+arch(0, "START", ["#ff4d4d", "#ffffff"]); arch(CONFIG.length, "FINISH", ["#1c2a4a", "#ffd23f"]);
+// The gates: two flags each, red and blue in turn. Rebuilt for every run's seed.
+const poleGeo = new THREE.CylinderGeometry(0.08, 0.08, 3.2, 6).translate(0, 1.6, 0), flagGeo = new THREE.PlaneGeometry(1.6, 1.2);
+const FLAG = { red: new THREE.MeshLambertMaterial({ color: "#ff3b3b", side: THREE.DoubleSide, emissive: "#550000" }), blue: new THREE.MeshLambertMaterial({ color: "#2f6bff", side: THREE.DoubleSide, emissive: "#000a55" }),
+  done: new THREE.MeshLambertMaterial({ color: "#3ddc84", side: THREE.DoubleSide, emissive: "#0a5a2a" }), miss: new THREE.MeshLambertMaterial({ color: "#8b93a3", side: THREE.DoubleSide }) };
+const poleMat = new THREE.MeshLambertMaterial({ color: "#ffffff" });
+let gateGroup = null;
+function buildGates(seed) {
+  course = { seed, gates: makeGates(seed) };
+  if (gateGroup) { scene.remove(gateGroup); }
+  gateGroup = new THREE.Group(); scene.add(gateGroup);
+  for (const g of course.gates) {
+    g.flags = [];
+    for (const s of [-1, 1]) {
+      const x = g.x + (s * CONFIG.gateWidth) / 2, y = baseH(x, g.z), pole = new THREE.Mesh(poleGeo, poleMat), flag = new THREE.Mesh(flagGeo, g.red ? FLAG.red : FLAG.blue);
+      pole.position.set(x, y, g.z); flag.position.set(x - s * 0.82, y + 2.5, g.z); gateGroup.add(pole, flag); g.flags.push(flag);
+    }
+  }
+}
+/** Color a gate's flags for how I did there: passed (green), missed (grey). */
+function markGate(g, passed) { for (const f of g.flags) f.material = passed ? FLAG.done : FLAG.miss; }
+// Snow spray and confetti: a pool of little cubes, reused.
+const BITS = 300, bitMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), new THREE.MeshBasicMaterial({ color: "#ffffff" }), BITS);
+bitMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); bitMesh.frustumCulled = false; scene.add(bitMesh);
+for (let i = 0; i < BITS; i++) bitMesh.setColorAt(i, new THREE.Color("#fff"));
+const bits = Array.from({ length: BITS }, () => ({ life: 0, max: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 }));
+let nextBit = 0;
+function burst(x, y, z, color, n, speed, up = 1, life = 0.8) {
+  const col = new THREE.Color(color);
+  for (let k = 0; k < n; k++) {
+    const i = nextBit, b = bits[i], a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random() * 0.7); nextBit = (nextBit + 1) % BITS;
+    Object.assign(b, { life, max: life, x, y, z, vx: Math.cos(a) * s, vy: speed * up * (0.4 + Math.random() * 0.8), vz: Math.sin(a) * s });
+    bitMesh.setColorAt(i, col);
+  }
+  bitMesh.instanceColor.needsUpdate = true;
+}
+const _s = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+function tickBits(dt) {
+  bits.forEach((b, i) => {
+    if (b.life > 0) { b.life -= dt; b.vy -= 18 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt; }
+    const s = b.life > 0 ? Math.min(1, (b.life / b.max) * 2) : 0;
+    mtx.compose(_s.set(b.x, b.y, b.z), _q.setFromEuler(_e.set(b.life * 7, b.life * 5, 0)), new THREE.Vector3(s, s, s)); bitMesh.setMatrixAt(i, mtx);
+  });
+  bitMesh.instanceMatrix.needsUpdate = true;
+}
+// Falling snow around the camera.
+const FLAKES = 700, flakePos = new Float32Array(FLAKES * 3);
+for (let i = 0; i < FLAKES; i++) flakePos.set([(seeded() - 0.5) * 60, (seeded() - 0.5) * 40, (seeded() - 0.5) * 60], i * 3);
+const flakeGeo = new THREE.BufferGeometry(); flakeGeo.setAttribute("position", new THREE.BufferAttribute(flakePos, 3));
+const flakeTex = canvasTex(32, 32, (c) => { const g = c.createRadialGradient(16, 16, 0, 16, 16, 16); g.addColorStop(0, "#fff"); g.addColorStop(0.5, "#ffffffaa"); g.addColorStop(1, "#fff0"); c.fillStyle = g; c.fillRect(0, 0, 32, 32); });
+const flakes = new THREE.Points(flakeGeo, new THREE.PointsMaterial({ color: "#ffffff", map: flakeTex, size: 0.22, transparent: true, depthWrite: false }));
+flakes.frustumCulled = false; scene.add(flakes);
+function tickFlakes(dt, t) {
+  for (let i = 0; i < FLAKES; i++) {
+    let x = flakePos[i * 3] + Math.sin(t + i) * 0.6 * dt, y = flakePos[i * 3 + 1] - 3 * dt, z = flakePos[i * 3 + 2];
+    if (y < -20) y += 40; flakePos[i * 3] = x; flakePos[i * 3 + 1] = y; flakePos[i * 3 + 2] = z;
+  }
+  flakeGeo.attributes.position.needsUpdate = true; flakes.position.copy(camera.position);
+}
+// Sound: tiny WebAudio blips, started by the first key or touch.
+let actx = null;
+function beep(freq, dur, type = "sine", vol = 0.12, to = 0) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = type; o.frequency.value = freq;
+  if (to) o.frequency.exponentialRampToValueAtTime(to, actx.currentTime + dur);
+  g.gain.setValueAtTime(vol, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
+}
+
+// ── SKIERS ──────────────────────────────────────────────────────────────────────────
+// A skier: { x, z, h (heading: 0 = straight down, + = toward +x), v (speed), ay (height
+// above the snow), vy, air, tuck, lean }.
+const newSkier = (x, z) => ({ x, z, h: 0, v: 0, ay: 0, vy: 0, air: false, tuck: false, lean: 0 });
+/** Move any skier for dt with input { steer -1..1 (+ = toward +x), tuck }. Returns "jump", "land", "fence" or null. */
+function stepSkier(s, inp, dt) {
+  let ev = null;
+  if (!s.air) {
+    const steer = clamp(inp.steer, -1, 1), tuck = !!inp.tuck && s.v > 3, deep = Math.abs(s.x - centerX(s.z)) > HALF;
+    s.h = clamp(s.h + steer * CONFIG.turn * (tuck ? CONFIG.tuckTurn : 1) * dt, -1.5, 1.5);
+    const drag = (tuck ? CONFIG.tuckDrag : CONFIG.drag) * (deep ? 2.5 : 1), runout = s.z > END;
+    s.v += (CONFIG.gravity * (runout ? 0.1 : 1) * Math.cos(s.h) - drag * s.v * s.v - CONFIG.friction - (deep ? CONFIG.deepSnow : 0) - (runout ? 8 : 0)) * dt;
+    s.v = Math.max(0, s.v - Math.abs(steer) * s.v * CONFIG.carveLoss * dt);
+    s.tuck = tuck; s.lean += (steer * Math.min(1, s.v / 15) - s.lean) * Math.min(1, dt * 6);
+  }
+  const px = s.x, pz = s.z;
+  s.x += Math.sin(s.h) * s.v * dt; s.z += Math.cos(s.h) * s.v * dt;
+  if (!s.air) for (const k of CONFIG.kickers) if (pz <= k && s.z > k && s.v > 8) { s.air = true; s.vy = s.v * CONFIG.launch; s.ay = 0; ev = "jump"; }
+  if (s.air) { // height above the snow: we rise and fall, the snow drops away under us
+    s.ay += s.vy * dt - (groundH(s.x, s.z) - groundH(px, pz)); s.vy -= CONFIG.airGravity * dt;
+    if (s.ay <= 0) { s.ay = 0; s.vy = 0; s.air = false; s.v *= 0.94; ev = "land"; }
+  }
+  const rel = s.x - centerX(s.z), lim = FENCE - 0.8;
+  if (Math.abs(rel) > lim) { // the fence: bounce back toward the run
+    const side = Math.sign(rel); s.x = centerX(s.z) + side * lim;
+    if (Math.sin(s.h) * side > 0) { s.h = -s.h * 0.4; s.v *= 0.75; ev = ev || "fence"; }
+  }
+  return ev;
+}
+/** Steering for a bot (or the ?attract autopilot): head for the next gate, tuck when lined up. */
+function autoInput(s, skill, plan) {
+  const gs = course.gates;
+  let i = s.gi, g = gs[i];
+  if (g && g.z - s.z < 7 && gs[i + 1]) g = gs[++i]; // nearly through: line up the next one
+  const aimX = g ? g.x + ((plan && plan[i]) || 0) : centerX(s.z + 40), aimZ = g ? g.z : s.z + 40;
+  const err = angle(Math.atan2(aimX - s.x, Math.max(6, aimZ - s.z)) - s.h);
+  return { steer: clamp(err * 3, -1, 1), tuck: Math.abs(err) < 0.04 + 0.08 * skill && (!g || g.z - s.z > 16) };
+}
+/** Check gates and the finish for skier s that moved from pz to s.z. Calls back for each gate. */
+function crossGates(s, pz, onGate) {
+  const gs = course.gates;
+  while (s.gi < gs.length && s.z >= gs[s.gi].z) {
+    const g = gs[s.gi], ok = Math.abs(s.x - g.x) <= CONFIG.gateWidth / 2;
+    if (!ok) s.pen++;
+    onGate(g, ok); s.gi++;
+  }
+}
+
+const UP = new THREE.Vector3(0, 1, 0), SLOPE_N = new THREE.Vector3(0, 1, CONFIG.slope).normalize();
+const skinMat = new THREE.MeshLambertMaterial({ color: "#ffd9b8" }), pantsMat = new THREE.MeshLambertMaterial({ color: "#26314f" }), gogMat = new THREE.MeshStandardMaterial({ color: "#ffb43d", emissive: "#a35c00", roughness: 0.2, metalness: 0.6 });
+const poleStick = new THREE.MeshLambertMaterial({ color: "#d9dde6" });
+function nameTag(name) {
+  const tex = canvasTex(256, 64, (c) => { c.font = "bold 34px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#0a2540bb"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); });
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(4, 1, 1); tag.position.y = 3.1; return tag;
+}
+const blobMat = new THREE.MeshBasicMaterial({ color: "#3a5a8a", transparent: true, opacity: 0.25, depthWrite: false }), blobGeo = new THREE.CircleGeometry(0.9, 20).rotateX(-Math.PI / 2);
+/** A blocky skier: skis, legs, a jacket in the player's color, helmet and goggles, poles. */
+function makeSkier(color, name) {
+  const g = new THREE.Group(), rig = new THREE.Group(), body = new THREE.Group(); g.add(rig);
+  const jacket = new THREE.MeshLambertMaterial({ color }), skiMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).lerp(new THREE.Color("#111"), 0.4) });
+  const box = (w, h, d, mat, x, y, z, parent) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); parent.add(m); return m; };
+  for (const x of [-0.24, 0.24]) { box(0.2, 0.06, 2.3, skiMat, x, 0.03, 0.15, rig); box(0.2, 0.06, 0.3, skiMat, x, 0.1, 1.32, rig).rotation.x = -0.5; }
+  const legs = new THREE.Group(); legs.position.y = 0.1; rig.add(legs);
+  for (const x of [-0.2, 0.2]) box(0.26, 0.85, 0.32, pantsMat, x, 0.43, 0, legs);
+  body.position.y = 0.92; rig.add(body);
+  box(0.62, 0.72, 0.4, jacket, 0, 0.36, 0, body);
+  box(0.42, 0.42, 0.42, skinMat, 0, 0.95, 0, body);
+  box(0.48, 0.24, 0.48, jacket, 0, 1.18, 0, body);
+  box(0.44, 0.13, 0.08, gogMat, 0, 1.0, 0.22, body);
+  const arms = [];
+  for (const x of [-0.42, 0.42]) {
+    const arm = new THREE.Group(); arm.position.set(x, 0.66, 0); body.add(arm);
+    box(0.2, 0.6, 0.22, jacket, 0, -0.28, 0.06, arm);
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 5), poleStick); stick.position.set(0, -0.75, -0.25); stick.rotation.x = 0.35; arm.add(stick);
+    arms.push(arm);
+  }
+  if (name) g.add(nameTag(name));
+  const blob = new THREE.Mesh(blobGeo, blobMat); scene.add(blob);
+  g.userData = { rig, body, legs, arms, blob };
+  scene.add(g); return g;
+}
+function dropSkier(g) { scene.remove(g.userData.blob); scene.remove(g); }
+const _f = new THREE.Vector3(), _x = new THREE.Vector3(), _n = new THREE.Vector3(), basis = new THREE.Matrix4();
+/** Put a skier mesh on the snow at (x, z), heading h, ay above it; pose for tuck / lean / air. */
+function placeSkier(g, x, z, h, ay, tuck, lean, air) {
+  const y = groundH(x, z);
+  g.position.set(x, y + ay, z);
+  _n.copy(kickH(z) > 0 || z > END ? UP : SLOPE_N);
+  _f.set(Math.sin(h), 0, Math.cos(h)); _f.addScaledVector(_n, -_n.dot(_f)).normalize(); // along the snow
+  _x.crossVectors(_n, _f); basis.makeBasis(_x, _n, _f); g.quaternion.setFromRotationMatrix(basis);
+  const { rig, body, legs, arms, blob } = g.userData;
+  rig.rotation.z = -lean * 0.45;
+  body.rotation.x = tuck ? 0.95 : 0.3; body.position.y = tuck ? 0.62 : 0.92; legs.scale.y = tuck ? 0.68 : 1;
+  for (const a of arms) a.rotation.x = air ? -2.2 : tuck ? -1.1 : -0.25;
+  blob.position.set(x, y + 0.06, z); const k = Math.max(0.35, 1 - ay / 8); blob.scale.set(k, 1, k * 1.6); blob.rotation.y = h;
+}
+const views = new Map(); // id -> drawn skier for everyone but me
+function viewOf(id, color, name) {
+  let v = views.get(id);
+  if (v && v.color !== color) { dropSkier(v.g); v.g = makeSkier(color, ATTRACT ? "" : name); v.color = color; } // they changed color
+  if (!v) { v = { g: makeSkier(color, ATTRACT ? "" : name), color, x: 0, z: 0, h: 0, ay: 0, raw: "", fresh: true, spray: 0 }; views.set(id, v); }
+  return v;
+}
+/** Ease a drawn skier toward where it said it was, plus how far it has gone since. */
+function follow(v, k, dt, now, exact) {
+  if (exact) { Object.assign(v, { x: k.x, z: k.z, h: k.h, ay: k.ay || 0 }); return; }
+  const key = `${k.x},${k.z},${k.h}`;
+  if (v.raw !== key) Object.assign(v, { raw: key, sx: k.x, sz: k.z, sh: k.h, sv: k.v || 0, say: k.ay || 0, at: now });
+  const el = Math.min(0.3, (now - v.at) / 1000), tx = v.sx + Math.sin(v.sh) * v.sv * el, tz = v.sz + Math.cos(v.sh) * v.sv * el;
+  if (v.fresh || Math.hypot(tx - v.x, tz - v.z) > 25) Object.assign(v, { x: tx, z: tz, h: v.sh, ay: v.say, fresh: false });
+  const e = 1 - Math.pow(0.002, dt);
+  v.x += (tx - v.x) * e; v.z += (tz - v.z) * e; v.h += angle(v.sh - v.h) * e; v.ay += (v.say - v.ay) * e;
+}
+/** Snow spraying off the skis while carving hard. */
+function spray(x, z, h, lean, v) {
+  if (Math.abs(lean) < 0.35 || v < 12 || Math.random() > 0.6) return;
+  const side = Math.sign(lean);
+  burst(x - Math.cos(h) * side * 0.6, groundH(x, z) + 0.2, z + Math.sin(h) * side * 0.6, "#cfe2fa", 2, 3 + v * 0.08, 0.8, 0.6);
+}
+
+// ── RACE (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { bots: new Map(), wasHost: false, lastBots: 0, raceId: 0, last: null };
+/** The run as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function race() {
+  const r = shared("race", null);
+  return host.last && isHost() && (!r || host.last.v > r.v) ? host.last : r;
+}
+function writeRace(r) { r = { ...r, v: (race()?.v ?? 0) + 1 }; host.last = r; net.setShared("race", JSON.stringify(r)); return r; }
+const newRace = (id) => writeRace({ id, phase: "grid", seed: Math.floor(Math.random() * 1e9), startAt: Date.now() + CONFIG.countdown, endsAt: 0, results: [] });
+/** Start spot `n` behind the start line. */
+const startSlot = (n) => ({ x: centerX(-5) + ((n % 8) - 3.5) * 3.6, z: -5 - Math.floor(n / 8) * 4 });
+
+/** Everyone on this run as { id, name, z, ft, pen }, leader first: finishers by time, then by how far down (less missed gates). */
+function racers() {
+  const out = [], r = race(), live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (!live.has(id)) continue;
+    if (id === net.sessionId) { out.push({ id, name: "You", z: me.z, ft: me.ft, pen: me.pen, mine: true }); continue; }
+    const k = parse(p.s, null); if (k && r && k.r === r.id) out.push({ id, name: p.n || "Player", z: k.z, ft: k.ft, pen: k.pen });
+  }
+  for (const b of botList()) out.push({ id: b.i, name: b.n, z: b.z, ft: b.ft, pen: b.pen, bot: true });
+  const ahead = (x) => x.z - (x.pen || 0) * (CONFIG.missPenalty / 1000) * 30; // a missed gate counts as 3s of skiing
+  return out.sort((a, b) => (a.ft && b.ft ? a.ft - b.ft : a.ft ? -1 : b.ft ? 1 : ahead(b) - ahead(a)));
+}
+/** The bots as published: the host's live copy, or the last list it wrote. */
+function botList() {
+  if (isHost()) return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, z: b.z, h: b.h, v: b.v, ay: b.ay, tk: b.tuck ? 1 : 0, l: b.lean, ft: b.ft, pen: b.pen, sk: b.skill, rt: b.t0 && !b.ft ? Date.now() - b.t0 : 0 }));
+  return shared("bots", []);
+}
+/** A bot's plan for this course: where in each gate it aims (and the few gates it will miss). */
+function botPlan(skill) {
+  return course.gates.map(() => (Math.random() < CONFIG.botMiss * (1.4 - skill) ? (Math.random() < 0.5 ? -1 : 1) * (CONFIG.gateWidth / 2 + 3) : (Math.random() - 0.5) * CONFIG.gateWidth * 0.5 * (1.2 - skill)));
+}
+function spawnBots(humans) {
+  const want = Math.max(0, CONFIG.seats - humans.length);
+  const keep = [...host.bots.values()].slice(0, want);
+  host.bots.clear(); keep.forEach((b) => host.bots.set(b.id, b));
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.name)), name = BOT_NAMES.find((n) => !used.has(n)) || "Bot";
+    const taken = new Set([...Object.values(S.entities.players || {}).map((p) => p.c), myColor, ...[...host.bots.values()].map((b) => b.color)]);
+    const id = "b" + Math.random().toString(36).slice(2, 6), [lo, hi] = CONFIG.botSkill;
+    host.bots.set(id, { id, name, color: COLORS.find((c) => !taken.has(c)) || "#cccccc", skill: lo + Math.random() * (hi - lo) });
+  }
+  let n = humans.length;
+  for (const b of host.bots.values()) { const s = startSlot(n++); Object.assign(b, newSkier(s.x, s.z), { gi: 0, pen: 0, t0: 0, ft: 0, pushed: false, plan: botPlan(b.skill) }); }
+}
+function adoptBots() {
+  host.bots.clear();
+  for (const b of shared("bots", [])) {
+    const gi = course.gates.findIndex((g) => g.z > b.z);
+    host.bots.set(b.i, Object.assign(newSkier(b.x, b.z), { id: b.i, name: b.n, color: b.c, skill: b.sk || 0.85, h: b.h || 0, v: b.v || 0, ay: b.ay || 0, air: (b.ay || 0) > 0.05, pushed: true, gi: gi < 0 ? course.gates.length : gi, pen: b.pen || 0, ft: b.ft || 0, t0: b.rt ? Date.now() - b.rt : b.z >= 0 ? Date.now() : 0, plan: botPlan(b.sk || 0.85) }));
+  }
+}
+
+function hostTick(dt, now) {
+  let r = race();
+  if (!r) r = newRace(1);
+  if (course.seed !== r.seed) buildGates(r.seed);
+  if (!host.wasHost) { host.wasHost = true; adoptBots(); } // adopt the bots exactly as state has them
+  const humans = livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+  if (host.raceId !== r.id) { host.raceId = r.id; if (r.phase === "grid") spawnBots(humans); }
+  else if (r.phase === "grid" && host.bots.size !== Math.max(0, CONFIG.seats - humans.length)) spawnBots(humans); // someone joined or left before GO
+  const t = Date.now();
+  if (r.phase === "grid" && t >= r.startAt) r = writeRace({ ...r, phase: "race" });
+  if (r.phase === "race") {
+    const all = racers(), done = all.filter((x) => x.ft);
+    const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
+    if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
+    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 180000 || (ATTRACT && done.length >= 3)) {
+      r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, pen: x.pen || 0 })) });
+    }
+  }
+  if (r.phase === "done" && t > r.endsAt) r = newRace(r.id + 1);
+  for (const b of host.bots.values()) {
+    if (r.phase === "grid") continue; // held at the start
+    if (!b.pushed) { b.pushed = true; b.v = Math.max(b.v, CONFIG.pushOff); }
+    const pz = b.z, ev = stepSkier(b, b.ft ? { steer: 0, tuck: false } : autoInput(b, b.skill, b.plan), dt);
+    if (pz < 0 && b.z >= 0) b.t0 = t;
+    crossGates(b, pz, () => {});
+    if (!b.ft && b.t0 && b.z >= CONFIG.length) b.ft = t - b.t0 + b.pen * CONFIG.missPenalty;
+  }
+  separate([...host.bots.values()], true);
+  if (now - host.lastBots > 100) {
+    host.lastBots = now;
+    net.setShared("bots", JSON.stringify(botList().map((b) => ({ ...b, x: +b.x.toFixed(2), z: +b.z.toFixed(2), h: +b.h.toFixed(3), v: +b.v.toFixed(1), ay: +b.ay.toFixed(2), l: +b.l.toFixed(2), sk: +b.sk.toFixed(2) }))));
+  }
+}
+/** Skiers that bump slide apart sideways: bots push each other; anyone pushes out of everyone else. */
+function separate(list, bots) {
+  const others = bots ? [me, ...[...views.entries()].filter(([id]) => !host.bots.has(id)).map(([, v]) => v)] : [...views.values()];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    for (const o of bots ? [...list.slice(i + 1), ...others] : others) {
+      const dz = a.z - o.z, dx = a.x - o.x;
+      if (Math.abs(dz) > 1.8 || Math.abs(dx) > 1.6) continue;
+      const push = (1.6 - Math.abs(dx)) * 0.5, s = Math.sign(dx) || 1;
+      a.x += s * push; if (bots && host.bots.has(o.id)) o.x -= s * push;
+    }
+  }
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Swift", "Snowy", "Frosty", "Brave", "Zippy", "Lucky"][Math.floor(Math.random() * 6)] + " " + ["Skier", "Racer", "Yeti", "Fox", "Owl"][Math.floor(Math.random() * 5)];
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+/** Two people joined at once in one color: the one with the higher sessionId picks a free one. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botList().map((b) => b.c)]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { myColor = free; net.me.set("c", free); if (me.g) { dropSkier(me.g); me.g = null; } }
+}
+const me = Object.assign(newSkier(0, -5), { g: null, gi: 0, pen: 0, t0: 0, ft: 0, raceId: -1, best: 0, lastSend: 0, submitted: -1, plan: null });
+const input = { left: false, right: false, tuck: false, axis: 0 };
+
+/** My start spot: my place among the live players, or the first one no other player is in. */
+function mySlot(r) {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => parse(p.s, null)).filter((k) => k && k.r === r.id);
+  const free = (s) => !others.some((k) => Math.abs(k.x - s.x) < 1.5 && Math.abs(k.z - s.z) < 1.5);
+  let n = Math.max(0, livePlayers().indexOf(net.sessionId));
+  while (!free(startSlot(n)) && n < 24) n++;
+  return startSlot(n);
+}
+function resetToStart(r) {
+  me.raceId = r.id;
+  if (course.seed !== r.seed) buildGates(r.seed);
+  const s = ATTRACT ? { x: centerX(-14), z: -14 } : r.phase === "grid" ? mySlot(r) : startSlot(Math.floor(Math.random() * 8));
+  Object.assign(me, newSkier(s.x, s.z), { gi: 0, pen: 0, t0: 0, ft: 0, pushed: false });
+  if (ATTRACT) me.plan = course.gates.map(() => 0);
+  $("over").hidden = true;
+}
+
+function myTick(dt, r, now) {
+  if (me.raceId !== r.id) resetToStart(r);
+  if (r.phase === "grid") { publish(now); return; } // waiting at the start
+  if (!me.pushed) { me.pushed = true; me.v = CONFIG.pushOff; }
+  if (ATTRACT) { const a = autoInput(me, 1, me.plan); input.axis = a.steer; input.tuck = a.tuck; } // starts behind the pack and catches it
+  const steer = input.axis || (input.left ? 1 : 0) - (input.right ? 1 : 0); // + = toward +x, which is screen left looking downhill
+  const pz = me.z, ev = stepSkier(me, me.ft ? { steer: steer * 0.5, tuck: false } : { steer, tuck: input.tuck }, dt);
+  if (ev === "jump") { beep(260, 0.4, "sine", 0.1, 620); toast("Big air!", 900); }
+  if (ev === "land") { beep(90, 0.15, "triangle", 0.15); burst(me.x, groundH(me.x, me.z) + 0.2, me.z, "#cfe2fa", 14, 5, 0.6); }
+  if (ev === "fence") { beep(140, 0.12, "square", 0.08); burst(me.x, groundH(me.x, me.z) + 0.6, me.z, "#ff6a1a", 8, 4); }
+  if (!me.air) spray(me.x, me.z, me.h, me.lean, me.v);
+  if (pz < 0 && me.z >= 0 && !me.t0) me.t0 = Date.now(); // your clock starts at the start line
+  if (!me.ft) crossGates(me, pz, (g, ok) => {
+    markGate(g, ok);
+    if (ok) { beep(880, 0.1, "sine", 0.1); setTimeout(() => beep(1320, 0.12, "sine", 0.08), 70); burst(g.x, groundH(g.x, g.z) + 1.5, g.z, "#3ddc84", 10, 4); }
+    else { beep(150, 0.3, "square", 0.08); toast(`Missed gate! +${CONFIG.missPenalty / 1000}s`, 1200, true); }
+  });
+  if (!me.ft && me.t0 && me.z >= CONFIG.length) finish(r);
+  separate([me], false);
+  publish(now);
+}
+function finish(r) {
+  me.ft = Date.now() - me.t0 + me.pen * CONFIG.missPenalty;
+  if (!me.best || me.ft < me.best) me.best = me.ft;
+  beep(660, 0.15); setTimeout(() => beep(880, 0.15), 140); setTimeout(() => beep(1320, 0.35), 280);
+  burst(me.x, groundH(me.x, me.z) + 1, me.z, myColor, 40, 7);
+  toast(`${fmt(me.ft)}${me.pen ? ` (${me.pen} missed)` : ""}`, 2600);
+}
+function publish(now) {
+  if (now - me.lastSend < 66) return;
+  me.lastSend = now;
+  net.me.set("s", JSON.stringify({ r: me.raceId, x: +me.x.toFixed(2), z: +me.z.toFixed(2), h: +me.h.toFixed(3), v: +me.v.toFixed(1), ay: +me.ay.toFixed(2), tk: me.tuck ? 1 : 0, l: +me.lean.toFixed(2), pen: me.pen, ft: me.ft }));
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const ord = (n) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}.${String(Math.floor((ms % 1000) / 10)).padStart(2, "0")}`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let toastTimer = 0;
+function toast(text, ms = 1500, bad = false) { if (ATTRACT) return; const m = $("msg"); m.textContent = text; m.classList.toggle("bad", bad); m.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => m.classList.remove("on"), ms); }
+let board = null, boardFor = -1, lastCount = "", started = 0;
+function hud(r, now) {
+  const t = Date.now();
+  const count = r.phase === "grid" && r.startAt - t < 3000 ? String(Math.max(1, Math.ceil((r.startAt - t) / 1000))) : r.phase === "race" && t - r.startAt < 900 ? "GO!" : "";
+  if (count !== lastCount) { lastCount = count; if (count === "GO!") beep(880, 0.4, "square", 0.08); else if (count) beep(440, 0.15, "square", 0.08); }
+  $("count").textContent = count;
+  if (ATTRACT) { for (const id of ["pos", "gates", "time", "net", "hint"]) $(id).textContent = ""; return; }
+  const order = racers(), at = order.findIndex((x) => x.mine) + 1, n = course.gates.length;
+  $("pos").innerHTML = at ? `${ord(at)} <small>/ ${order.length}</small>` : "";
+  $("gates").innerHTML = `Gate ${Math.min(n, me.gi + (me.ft ? 0 : 1))}/${n}${me.pen ? ` · <b>${me.pen} missed (+${(me.pen * CONFIG.missPenalty) / 1000}s)</b>` : ""}`;
+  const run = me.ft || (me.t0 ? t - me.t0 + me.pen * CONFIG.missPenalty : 0);
+  $("time").innerHTML = `${fmt(run)}<small>${Math.round(me.v * 3)} km/h${me.best ? ` · best ${fmt(me.best)}` : ""}</small>`;
+  $("hint").textContent = r.phase === "grid" && r.startAt - t >= 3000 ? "Next run starting…" : me.ft && r.phase === "race" ? "Waiting for the others…" :
+    now - started < 14000 ? (touchUI ? "◀ ▶ to carve · hold TUCK for speed · pass between the flags" : "←/→ to carve · hold ↓ or Space to tuck · pass between the flags") : "";
+  const np = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${np} player${np === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
+  $("over").hidden = r.phase !== "done";
+  if (r.phase === "done") {
+    const res = [...r.results].sort((a, b) => (a.ft && b.ft ? a.ft - b.ft : a.ft ? -1 : b.ft ? 1 : 0));
+    $("results").innerHTML = res.map((x) => `<li class="${x.id === net.sessionId ? "me" : ""}">${esc(x.n)}${x.pen ? `<em>+${x.pen} gate${x.pen > 1 ? "s" : ""}</em>` : ""}<span>${x.ft ? fmt(x.ft) : "DNF"}</span></li>`).join("");
+    $("next").textContent = `Next run in ${Math.max(0, Math.ceil((r.endsAt - t) / 1000))}s`;
+    if (boardFor !== r.id) { boardFor = r.id; showBoard(); }
+  }
+}
+function showBoard() {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  const submit = me.ft && me.submitted !== me.raceId ? board.submit(Math.max(0, 600000 - me.ft)).catch(() => null) : Promise.resolve();
+  me.submitted = me.raceId;
+  submit.then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${fmt(600000 - e.score)}</span></li>`).join("") : "<li class=\"note\">No runs yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
+}
+function again() { const r = race(); if (r && r.phase === "done" && isHost()) newRace(r.id + 1); }
+$("again").onclick = () => { if (isHost()) again(); else net.send("again", {}); };
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("padL").hidden = $("padR").hidden = !touchUI;
+document.body.classList.toggle("touch", touchUI);
+const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
+const KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right", ArrowDown: "tuck", s: "tuck", S: "tuck", " ": "tuck", Shift: "tuck" };
+addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); input[k] = true; } });
+addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k) input[k] = false; });
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => on(false));
+}
+renderer.domElement.addEventListener("pointerdown", wakeAudio);
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0, camH = 0;
+const camLook = new THREE.Vector3(), camWant = new THREE.Vector3();
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt, now); else host.wasHost = false;
+  const r = race();
+  if (r && course.seed !== r.seed) buildGates(r.seed);
+  if (r) myTick(dt, r, now);
+  // everyone else
+  const seen = new Set(), live = new Set(livePlayers()); // a closed tab can linger in state for a while: skip it
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.has(id)) continue;
+    const k = parse(p.s, null); if (!k || !r || k.r !== r.id) continue;
+    seen.add(id); const v = viewOf(id, p.c || "#ccc", p.n || "Player"); follow(v, k, dt, now, false);
+    placeSkier(v.g, v.x, v.z, v.h, v.ay, !!k.tk, k.l || 0, v.ay > 0.1);
+    if (v.ay < 0.05) spray(v.x, v.z, v.h, k.l || 0, k.v || 0);
+  }
+  const exact = isHost();
+  for (const b of botList()) {
+    seen.add(b.i); const v = viewOf(b.i, b.c, b.n); follow(v, b, dt, now, exact);
+    placeSkier(v.g, v.x, v.z, v.h, v.ay, !!b.tk, b.l || 0, v.ay > 0.1);
+    if (v.ay < 0.05) spray(v.x, v.z, v.h, b.l || 0, b.v || 0);
+  }
+  for (const [id, v] of views) if (!seen.has(id)) { dropSkier(v.g); views.delete(id); }
+  if (!me.g) me.g = makeSkier(myColor, "");
+  placeSkier(me.g, me.x, me.z, me.h, me.ay, me.tuck, me.lean, me.air);
+  for (const g of course.gates) for (const f of g.flags) f.rotation.y = Math.sin(now / 300 + g.z) * 0.25;
+  tickBits(dt); tickFlakes(dt, now / 1000);
+  // chase camera: behind and above, looking down the hill
+  camH += angle(me.h * 0.6 - camH) * Math.min(1, dt * 3);
+  const tall = camera.aspect < 1, back = ATTRACT ? 6.5 : tall ? 9 : 6.5, high = ATTRACT ? 2 : tall ? 4.2 : 1.8; // a phone held upright looks further down the hill
+  camWant.set(me.x - Math.sin(camH) * back, groundH(me.x, me.z) + back * CONFIG.slope + high + me.ay * 0.6, me.z - Math.cos(camH) * back);
+  camera.position.copy(camWant);
+  camLook.set(me.x + Math.sin(camH) * 14, groundH(me.x, me.z) - (tall ? 3.5 : 0.4) + me.ay * 0.7, me.z + Math.cos(camH) * 14);
+  camera.lookAt(camLook);
+  const fov = (camera.aspect < 1 ? 78 : 60) + (me.tuck ? 6 : 0) + clamp(me.v / 50, 0, 1) * 8;
+  camera.fov += (fov - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix();
+  sky.position.copy(camera.position);
+  renderer.render(scene, camera);
+  if (r && now - lastHud > 100) { lastHud = now; hud(r, now); }
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("again", () => again());
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...shared("bots", []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { countdown: 1200, resultsFor: 1500, seats: 7 });
+  camera.position.set(me.x, groundH(me.x, -14) + 5, -14);
+  started = performance.now();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
