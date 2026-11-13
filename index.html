@@ -121,6 +121,7 @@ const CONFIG = {
   missPenalty: 3000,      // ms added for each missed gate
   countdown: 5000,        // ms at the start before GO
   afterFirst: 20000,      // ms the run stays open after the first skier finishes
+  botsAfterLast: 5000,    // ...or this long after the last person finishes, so bots close behind still get a time
   resultsFor: 12000,      // ms the results show before the next run
   botSkill: [0.7, 1],     // how clean and brave bots are
   botMiss: 0.06,          // chance a bot misses any one gate
@@ -468,12 +469,14 @@ function makeSkier(color, name) {
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 5), poleStick); stick.position.set(0, -0.75, -0.25); stick.rotation.x = 0.35; arm.add(stick);
     arms.push(arm);
   }
-  if (name) g.add(nameTag(name));
+  const tag = name ? nameTag(name) : null; if (tag) g.add(tag);
   const blob = new THREE.Mesh(blobGeo, blobMat); scene.add(blob);
-  g.userData = { rig, body, legs, arms, blob };
+  g.userData = { rig, body, legs, arms, blob, tag };
   scene.add(g); return g;
 }
 function dropSkier(g) { scene.remove(g.userData.blob); scene.remove(g); }
+/** Someone else's skier right at the camera would fill the screen, and its name tag even more: hide what is too close. */
+function hideNearCamera(g) { const d = camera.position.distanceToSquared(g.position); g.visible = d > 16; if (g.userData.tag) g.userData.tag.visible = d > 49; }
 const _f = new THREE.Vector3(), _x = new THREE.Vector3(), _n = new THREE.Vector3(), basis = new THREE.Matrix4();
 /** Put a skier mesh on the snow at (x, z), heading h, ay above it; pose for tuck / lean / air. */
 function placeSkier(g, x, z, h, ay, tuck, lean, air) {
@@ -580,7 +583,8 @@ function hostTick(dt, now) {
     const all = racers(), done = all.filter((x) => x.ft);
     const humansDone = all.filter((x) => !x.bot && (!ATTRACT || !x.mine)).every((x) => x.ft);
     if (done.length && !r.endsAt) r = writeRace({ ...r, endsAt: t + CONFIG.afterFirst });
-    if ((done.length && humansDone && humans.length) || (r.endsAt && t > r.endsAt) || t - r.startAt > 180000 || (ATTRACT && done.length >= 3)) {
+    if (done.length && humansDone && humans.length && r.endsAt > t + CONFIG.botsAfterLast) r = writeRace({ ...r, endsAt: t + CONFIG.botsAfterLast }); // everyone's down: the bots still skiing get a few seconds to finish
+    if (done.length === all.length || (r.endsAt && t > r.endsAt) || t - r.startAt > 180000 || (ATTRACT && done.length >= 3)) {
       r = writeRace({ ...r, phase: "done", endsAt: t + CONFIG.resultsFor, results: all.map((x) => ({ id: x.id, n: x.mine ? myName : x.name, ft: x.ft || 0, pen: x.pen || 0 })) });
     }
   }
@@ -703,6 +707,7 @@ function hud(r, now) {
   $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${np} player${np === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
   $("over").hidden = r.phase !== "done";
   if (r.phase === "done") {
+    $("msg").classList.remove("on"); // a finish toast would sit on top of the results card
     const res = [...r.results].sort((a, b) => (a.ft && b.ft ? a.ft - b.ft : a.ft ? -1 : b.ft ? 1 : 0));
     $("results").innerHTML = res.map((x) => `<li class="${x.id === net.sessionId ? "me" : ""}">${esc(x.n)}${x.pen ? `<em>+${x.pen} gate${x.pen > 1 ? "s" : ""}</em>` : ""}<span>${x.ft ? fmt(x.ft) : "DNF"}</span></li>`).join("");
     $("next").textContent = `Next run in ${Math.max(0, Math.ceil((r.endsAt - t) / 1000))}s`;
@@ -726,9 +731,13 @@ const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
 $("padL").hidden = $("padR").hidden = !touchUI;
 document.body.classList.toggle("touch", touchUI);
 const wakeAudio = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
-const KEYS = { ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right", ArrowDown: "tuck", s: "tuck", S: "tuck", " ": "tuck", Shift: "tuck" };
-addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.key]; if (k) { e.preventDefault(); input[k] = true; } });
-addEventListener("keyup", (e) => { const k = KEYS[e.key]; if (k) input[k] = false; });
+// Keys by where they sit on the keyboard (e.code), so they still work with Shift or Caps Lock held.
+const KEYS = { ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right", ArrowDown: "tuck", KeyS: "tuck", Space: "tuck", ShiftLeft: "tuck", ShiftRight: "tuck" };
+const held = new Set(); // the keys that are down right now: letting go of one tuck key while another is held keeps the tuck
+addEventListener("keydown", (e) => { wakeAudio(); const k = KEYS[e.code]; if (k) { e.preventDefault(); held.add(e.code); input[k] = true; } });
+addEventListener("keyup", (e) => { const k = KEYS[e.code]; held.delete(e.code); if (k) input[k] = [...held].some((c) => KEYS[c] === k); });
+// The tab lost focus: the keyups never arrive, so let go of everything.
+addEventListener("blur", () => { held.clear(); input.left = input.right = input.tuck = false; for (const b of document.querySelectorAll(".pad button")) b.classList.remove("on"); });
 for (const b of document.querySelectorAll(".pad button")) {
   const k = b.dataset.k, on = (v) => { input[k] = v; b.classList.toggle("on", v); };
   b.addEventListener("pointerdown", (e) => { e.preventDefault(); wakeAudio(); b.setPointerCapture(e.pointerId); on(true); });
@@ -756,13 +765,13 @@ function frame(now) {
     if (id === net.sessionId || !live.has(id)) continue;
     const k = parse(p.s, null); if (!k || !r || k.r !== r.id) continue;
     seen.add(id); const v = viewOf(id, p.c || "#ccc", p.n || "Player"); follow(v, k, dt, now, false);
-    placeSkier(v.g, v.x, v.z, v.h, v.ay, !!k.tk, k.l || 0, v.ay > 0.1);
+    placeSkier(v.g, v.x, v.z, v.h, v.ay, !!k.tk, k.l || 0, v.ay > 0.1); hideNearCamera(v.g);
     if (v.ay < 0.05) spray(v.x, v.z, v.h, k.l || 0, k.v || 0);
   }
   const exact = isHost();
   for (const b of botList()) {
     seen.add(b.i); const v = viewOf(b.i, b.c, b.n); follow(v, b, dt, now, exact);
-    placeSkier(v.g, v.x, v.z, v.h, v.ay, !!b.tk, b.l || 0, v.ay > 0.1);
+    placeSkier(v.g, v.x, v.z, v.h, v.ay, !!b.tk, b.l || 0, v.ay > 0.1); hideNearCamera(v.g);
     if (v.ay < 0.05) spray(v.x, v.z, v.h, b.l || 0, b.v || 0);
   }
   for (const [id, v] of views) if (!seen.has(id)) { dropSkier(v.g); views.delete(id); }
