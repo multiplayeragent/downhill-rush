@@ -108,6 +108,7 @@ const CONFIG = {
   tuckDrag: 0.0034,       // air drag tucked (top speed about 51)
   friction: 1,            // snow friction, units/s²
   deepSnow: 9,            // extra slowdown in deep snow
+  deepCrawl: 5,           // ...which fades below this speed, so deep snow slows you to a crawl but never strands you
   turn: 1.8,              // carving, radians/s
   tuckTurn: 0.5,          // share of your carving you keep while tucked
   carveLoss: 0.3,         // speed lost carving hard, per second
@@ -404,7 +405,7 @@ function stepSkier(s, inp, dt) {
     const steer = clamp(inp.steer, -1, 1), tuck = !!inp.tuck && s.v > 3, deep = Math.abs(s.x - centerX(s.z)) > HALF;
     s.h = clamp(s.h + steer * CONFIG.turn * (tuck ? CONFIG.tuckTurn : 1) * dt, -1.5, 1.5);
     const drag = (tuck ? CONFIG.tuckDrag : CONFIG.drag) * (deep ? 2.5 : 1), runout = s.z > END;
-    s.v += (CONFIG.gravity * (runout ? 0.1 : 1) * Math.cos(s.h) - drag * s.v * s.v - CONFIG.friction - (deep ? CONFIG.deepSnow : 0) - (runout ? 8 : 0)) * dt;
+    s.v += (CONFIG.gravity * (runout ? 0.1 : 1) * Math.cos(s.h) - drag * s.v * s.v - CONFIG.friction - (deep ? CONFIG.deepSnow * Math.min(1, s.v / CONFIG.deepCrawl) : 0) - (runout ? 8 : 0)) * dt;
     s.v = Math.max(0, s.v - Math.abs(steer) * s.v * CONFIG.carveLoss * dt);
     s.tuck = tuck; s.lean += (steer * Math.min(1, s.v / 15) - s.lean) * Math.min(1, dt * 6);
   }
@@ -476,7 +477,7 @@ function makeSkier(color, name) {
 }
 function dropSkier(g) { scene.remove(g.userData.blob); scene.remove(g); }
 /** Someone else's skier right at the camera would fill the screen, and its name tag even more: hide what is too close. */
-function hideNearCamera(g) { const d = camera.position.distanceToSquared(g.position); g.visible = d > 16; if (g.userData.tag) g.userData.tag.visible = d > 49; }
+function hideNearCamera(g) { const d = camera.position.distanceToSquared(g.position); g.visible = g.userData.blob.visible = d > 16; if (g.userData.tag) g.userData.tag.visible = d > 49; }
 const _f = new THREE.Vector3(), _x = new THREE.Vector3(), _n = new THREE.Vector3(), basis = new THREE.Matrix4();
 /** Put a skier mesh on the snow at (x, z), heading h, ay above it; pose for tuck / lean / air. */
 function placeSkier(g, x, z, h, ay, tuck, lean, air) {
@@ -665,7 +666,7 @@ function myTick(dt, r, now) {
     if (ok) { beep(880, 0.1, "sine", 0.1); setTimeout(() => beep(1320, 0.12, "sine", 0.08), 70); burst(g.x, groundH(g.x, g.z) + 1.5, g.z, "#3ddc84", 10, 4); }
     else { beep(150, 0.3, "square", 0.08); toast(`Missed gate! +${CONFIG.missPenalty / 1000}s`, 1200, true); }
   });
-  if (!me.ft && me.t0 && me.z >= CONFIG.length) finish(r);
+  if (!me.ft && me.t0 && me.z >= CONFIG.length && r.phase === "race") finish(r); // the clock stops once the results are up
   separate([me], false);
   publish(now);
 }
@@ -700,7 +701,7 @@ function hud(r, now) {
   $("pos").innerHTML = at ? `${ord(at)} <small>/ ${order.length}</small>` : "";
   $("gates").innerHTML = `Gate ${Math.min(n, me.gi + (me.ft ? 0 : 1))}/${n}${me.pen ? ` · <b>${me.pen} missed (+${(me.pen * CONFIG.missPenalty) / 1000}s)</b>` : ""}`;
   const run = me.ft || (me.t0 ? t - me.t0 + me.pen * CONFIG.missPenalty : 0);
-  $("time").innerHTML = `${fmt(run)}<small>${Math.round(me.v * 3)} km/h${me.best ? ` · best ${fmt(me.best)}` : ""}</small>`;
+  $("time").innerHTML = `${fmt(run)}<small>${Math.round(me.v * 3)} km/h${me.best ? `<br>best ${fmt(me.best)}` : ""}</small>`;
   $("hint").textContent = r.phase === "grid" && r.startAt - t >= 3000 ? "Next run starting…" : me.ft && r.phase === "race" ? "Waiting for the others…" :
     now - started < 14000 ? (touchUI ? "◀ ▶ to carve · hold TUCK for speed · pass between the flags" : "←/→ to carve · hold ↓ or Space to tuck · pass between the flags") : "";
   const np = livePlayers().length;
